@@ -8,8 +8,8 @@
 
 # Data Cleaning Methodology
 # File accessible via data/students.sql
-![alt text](<Screenshot 2025-11-17 at 9.58.06 AM.png>)
+![alt text](<screenshot_2025-11-17_095806.png>)
 
-![alt text](<Screenshot 2025-11-17 at 9.58.31 AM.png>)
+![alt text](<screenshot_2025-11-17_095831.png>)
 
-![alt text](<Screenshot 2025-11-17 at 9.59.02 AM.png>)
+![alt text](<screenshot_2025-11-17_095902.png>)
