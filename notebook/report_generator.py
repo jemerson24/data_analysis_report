@@ -1,134 +1,103 @@
-import os
-from typing import Dict, List, Optional, Tuple
-
-import numpy as np
+# In[ ]:
 import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import os
 
+# In[ ]:
+file_name = "student_grades_2027-2028.xlsx"
+file_path = os.path.join(os.getcwd(), file_name)
 
-# ============================================================
-# CONFIG
-# ============================================================
-FILE_NAME = "student_grades_2027-2028.xlsx"
-ALERT_THRESHOLD = 60
-SUBJECT_COLS = ["math", "english", "science", "history"]
-NEW_COHORT_CANDIDATES = ["23-24", "24-25", "25-26"]
-CLEAN_CSV_DIR = "cleaned_data"         # folder for cleaned CSVs
-DASHBOARD_FILE = "Final_Dashboard.xlsx"
+try:
+    xls = pd.ExcelFile(file_path)
 
-# Color palette
-CHART_COLORS = ["#ff9999", "#66b3ff", "#99ff99"]  # red, blue, green
-
-
-def series_color(i: int) -> str:
-    """Cycle through the red / blue / green palette."""
-    return CHART_COLORS[i % len(CHART_COLORS)]
-
-
-# ============================================================
-# DATA LOADING & CLEANING
-# ============================================================
-def load_excel_file(file_name: str) -> Optional[pd.ExcelFile]:
-    file_path = os.path.join(os.getcwd(), file_name)
-    try:
-        xls = pd.ExcelFile(file_path)
-        return xls
-    except FileNotFoundError:
-        print(f"Error: File '{file_name}' not found.")
-        return None
-    except Exception as e:
-        print("An unexpected error occurred while loading Excel:", e)
-        return None
-
-
-def load_track_sheets(xls: pd.ExcelFile) -> Tuple[Optional[pd.DataFrame],
-                                                  Optional[pd.DataFrame],
-                                                  Optional[pd.DataFrame]]:
+    # Load selected sheets if they exist
     data_df = pd.read_excel(xls, sheet_name="Data") if "Data" in xls.sheet_names else None
     fin_df = pd.read_excel(xls, sheet_name="Finance") if "Finance" in xls.sheet_names else None
     bm_df = pd.read_excel(xls, sheet_name="BM") if "BM" in xls.sheet_names else None
+
+    # Collect non-empty DFs into a list
+    dfs_to_concat = []
+    if data_df is not None:
+        data_df["Track"] = "Data"
+        dfs_to_concat.append(data_df)
+
+    if fin_df is not None:
+        fin_df["Track"] = "Finance"
+        dfs_to_concat.append(fin_df)
+
+    if bm_df is not None:
+        bm_df["Track"] = "BM"
+        dfs_to_concat.append(bm_df)
+
+    # Concatenate into one dataframe
+    uni_df = pd.concat(dfs_to_concat, ignore_index=True) if dfs_to_concat else None
 
     print("Sheets loaded:")
     print("Data:", data_df is not None)
     print("Finance:", fin_df is not None)
     print("BM:", bm_df is not None)
 
-    return data_df, fin_df, bm_df
+except FileNotFoundError:
+    print(f"Error: File '{file_name}' not found.")
+except Exception as e:
+    print("An unexpected error occurred:", e)
 
 
-def concat_with_track_labels(
-    data_df: Optional[pd.DataFrame],
-    fin_df: Optional[pd.DataFrame],
-    bm_df: Optional[pd.DataFrame],
-) -> Optional[pd.DataFrame]:
-    dfs_to_concat: List[pd.DataFrame] = []
 
-    if data_df is not None:
-        df = data_df.copy()
-        df["track"] = "Data"
-        dfs_to_concat.append(df)
-
-    if fin_df is not None:
-        df = fin_df.copy()
-        df["track"] = "Finance"
-        dfs_to_concat.append(df)
-
-    if bm_df is not None:
-        df = bm_df.copy()
-        df["track"] = "BM"
-        dfs_to_concat.append(df)
-
-    if not dfs_to_concat:
-        print("No sheets available to concatenate.")
-        return None
-
-    return pd.concat(dfs_to_concat, ignore_index=True)
-
-
-def clean_data(df: pd.DataFrame) -> pd.DataFrame:
+# In[ ]:
+def clean_data(df):
     df_clean = df.copy()
 
+    # 0. Rename columns from raw Excel headers to standard names (if present)
     rename_map = {
-        "StudentID": "student_id",
-        "FirstName": "first_name",
-        "LastName": "last_name",
-        "Class": "class_name",
-        "Term": "term",
-        "Math": "math",
-        "English": "english",
-        "Science": "science",
-        "History": "history",
-        "Attendance (%)": "attendance",
-        "ProjectScore": "project_score",
-        "Passed (Y/N)": "passed",
-        "IncomeStudent": "income_student",
-        "Cohort": "cohort",
-        "Track": "track",
+        'StudentID': 'student_id',
+        'FirstName': 'first_name',
+        'LastName': 'last_name',
+        'Class': 'class_name',
+        'Term': 'term',
+        'Math': 'math',
+        'English': 'english',
+        'Science': 'science',
+        'History': 'history',
+        'Attendance (%)': 'attendance',
+        'ProjectScore': 'project_score',
+        'Passed (Y/N)': 'passed',
+        'IncomeStudent': 'income_student',
+        'Cohort': 'cohort'
     }
 
+    # Only rename columns that actually exist in the dataframe
     safe_map = {old: new for old, new in rename_map.items() if old in df_clean.columns}
     df_clean = df_clean.rename(columns=safe_map)
 
+    # 1. Normalise column names: strip, lowercase, spaces -> underscores
     df_clean.columns = (
         df_clean.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_", regex=False)
-    )
-
-    bad_strings = ["", "n/a", "waived"]
-
-    mask = (
-        df_clean.isna()
-        | df_clean.apply(
-            lambda col: col.astype(str)
             .str.strip()
             .str.lower()
-            .isin(bad_strings)
+            .str.replace(" ", "_", regex=False)
+    )
+
+    # 2. Define bad string values (lowercase for comparison)
+    bad_strings = ["", "n/a", "waived"]
+
+    # 3. Build mask of bad values
+    mask = (
+        df_clean.isna() |
+        df_clean.apply(
+            lambda col: col.astype(str)
+                          .str.strip()
+                          .str.lower()
+                          .isin(bad_strings)
         )
     )
 
+    # Keep only rows with NO bad values
     df_clean = df_clean[~mask.any(axis=1)].copy()
 
+    # 4. Check required columns exist after renaming/normalising
     required_cols = ["student_id", "passed", "income_student"]
     missing = [c for c in required_cols if c not in df_clean.columns]
     if missing:
@@ -137,652 +106,581 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
             f"Current columns: {list(df_clean.columns)}"
         )
 
+    # 5. Convert student_id to integer safely
     df_clean["student_id"] = (
         df_clean["student_id"]
         .astype(str)
-        .str.replace(r"\.0$", "", regex=True)
+        .str.replace(r"\.0$", "", regex=True)  # handle "123.0" style values
         .astype(int)
     )
 
+    # 6. Convert passed ("Y"/"N") → 1/0
     df_clean["passed"] = df_clean["passed"].replace({"Y": 1, "N": 0})
+
+    # 7. Convert income_student ("True"/"False") → 1/0
     df_clean["income_student"] = df_clean["income_student"].replace(
         {"True": 1, "False": 0, True: 1, False: 0}
     )
 
+    # 8. Columns that must be numeric (after normalisation)
     num_cols_float = ["math", "english", "science", "history", "project_score", "attendance"]
     num_cols_int = ["term", "passed", "income_student"]
 
+    # Only use columns that actually exist
     num_cols_float_existing = [c for c in num_cols_float if c in df_clean.columns]
     num_cols_int_existing = [c for c in num_cols_int if c in df_clean.columns]
 
+    # First: convert to numeric, coercing bad values to NaN
     df_clean[num_cols_float_existing + num_cols_int_existing] = df_clean[
         num_cols_float_existing + num_cols_int_existing
     ].apply(lambda col: pd.to_numeric(col, errors="coerce"))
 
+    # Drop any rows that still have NaNs in numeric columns
     df_clean = df_clean.dropna(subset=num_cols_float_existing + num_cols_int_existing)
 
+    # Cast ints (no NaNs left)
     if num_cols_int_existing:
         df_clean[num_cols_int_existing] = df_clean[num_cols_int_existing].astype(int)
 
+    # Cast score columns (math, science, etc.) to int, keeping attendance as float
     score_cols = [col for col in num_cols_float_existing if col != "attendance"]
     if score_cols:
         df_clean[score_cols] = df_clean[score_cols].astype(int)
-
+        
+    # Set index at the end
     df_clean = df_clean.set_index("student_id")
 
     return df_clean
 
 
-# ============================================================
-# SUMMARY TABLE BUILDERS
-# ============================================================
-def get_track_counts(data_df: pd.DataFrame,
-                     fin_df: pd.DataFrame,
-                     bm_df: pd.DataFrame) -> pd.DataFrame:
-    num_d = len(data_df)
-    num_f = len(fin_df)
-    num_bm = len(bm_df)
+# In[ ]:
+uni_df = clean_data(uni_df)
+data_df = clean_data(data_df)
+fin_df = clean_data(fin_df)
+bm_df = clean_data(bm_df)
 
-    print(
-        f"There are {num_d} students in the Data track, "
-        f"{num_f} students in the Finance track, "
-        f"and {num_bm} students in the Business track."
-    )
+# In[ ]:
+# Count cohort sizes & set variables 
+num_d = len(data_df)
+num_f = len(fin_df)
+num_bm = len(bm_df)
+num_students = [num_d, num_f, num_bm]
+labels = ["Data", "Finance", "Business"]
+print(f"There are {num_d} students in the Data track, {num_f} students in the Finance track, and {num_bm} students in the Business track.")
 
-    return pd.DataFrame({
-        "track": ["Data", "Finance", "Business"],
-        "count": [num_d, num_f, num_bm],
-    })
+# In[ ]:
+# Plot pie chart
+plt.pie(num_students, 
+        labels=labels, 
+        autopct='%1.1f%%', 
+        startangle=90, 
+        shadow=True, 
+        colors=['#ff9999','#66b3ff','#99ff99']
+        )
+plt.title('Major Distribution')
+plt.show()
 
+# In[ ]:
+track_summary = uni_df.groupby("track", as_index=False).agg({
+    "math": "mean",
+    "english": "mean",
+    "science": "mean",
+    "history": "mean",
+    "attendance": "mean",
+    "project_score": "mean",
+})
 
-def make_track_summary(uni_df: pd.DataFrame) -> pd.DataFrame:
-    track_summary = uni_df.groupby("track", as_index=False).agg(
-        {
-            "math": "mean",
-            "english": "mean",
-            "science": "mean",
-            "history": "mean",
-            "attendance": "mean",
-            "project_score": "mean",
-        }
-    )
-    print("\nTrack summary:")
-    print(track_summary)
-    return track_summary
-
-
-def make_pass_fail_summary(uni_df: pd.DataFrame) -> pd.DataFrame:
-    vc = uni_df["passed"].value_counts()
-    passed = vc.get(1, 0)
-    failed = vc.get(0, 0)
-    total = passed + failed if (passed + failed) > 0 else 1
-
-    print(
-        f"There are {round(passed / total * 100, 2)}% students who passed "
-        f"and {round(failed / total * 100, 2)}% students who failed."
-    )
-
-    return pd.DataFrame({
-        "Status": ["Pass", "Fail"],
-        "Count": [passed, failed],
-        "Percent": [passed / total * 100, failed / total * 100],
-    })
+print(track_summary)
 
 
-def summarize_by_cohort(uni_df: pd.DataFrame) -> pd.DataFrame:
-    cohort_summary = uni_df.groupby("cohort").agg(
-        avg_math=("math", "mean"),
-        avg_english=("english", "mean"),
-        avg_science=("science", "mean"),
-        avg_history=("history", "mean"),
-        avg_attendance=("attendance", "mean"),
-        avg_project=("project_score", "mean"),
-        pass_rate=("passed", "mean"),
-        count=("cohort", "size"),
-    ).reset_index()
+# In[ ]:
+passed = uni_df["passed"].value_counts()[1]
+failed = uni_df["passed"].value_counts()[0]
+pf_ratio = [passed, failed]
+labels = ["Pass", "Fail"]
 
-    print("\nCohort-Level Summary:")
-    print(cohort_summary)
+# In[ ]:
+# Plot pie chart
+plt.pie(pf_ratio,
+        labels=labels, 
+        autopct='%1.1f%%', 
+        startangle=90, 
+        shadow=True, 
+        colors=['#99ff99','#ff9999']
+        )
+plt.title('Pass/Fail Ratio')
+plt.show()
+print(f"There are {round(passed/(failed+passed)*100, 2)}% students who passed and {round(failed/(failed+passed)*100, 2)}% students who failed.")
 
-    return cohort_summary
+# In[ ]:
+plt.figure()
+
+tracks = [data_df, fin_df, bm_df]
+labels = ["Data", "Finance", "BM"]
+
+for track, label in zip(tracks, labels):
+    plt.hist(track["history"], bins=10, alpha=0.5, label=label)
+
+plt.legend()
+plt.title("History Grade Distribution (Histogram)")
+plt.xlabel("History Score")
+plt.ylabel("Frequency")
+plt.show()
+
+# In[ ]:
+plt.figure()
+
+plt.boxplot(
+    [data_df["history"], fin_df["history"], bm_df["history"]],
+    labels=["Data", "Finance", "BM"]
+)
+
+plt.title("History Scores by Track (Boxplot)")
+plt.ylabel("Scores")
+plt.show()
 
 
-def summarize_by_income(uni_df: pd.DataFrame) -> pd.DataFrame:
-    income_summary = uni_df.groupby("income_student").agg(
-        avg_math=("math", "mean"),
-        avg_english=("english", "mean"),
-        avg_science=("science", "mean"),
-        avg_history=("history", "mean"),
-        avg_attendance=("attendance", "mean"),
-        avg_score=("project_score", "mean"),
-        pass_rate=("passed", "mean"),
-        count=("income_student", "size"),
-    ).reset_index()
+# In[ ]:
+temp = pd.DataFrame({
+    "Track": ["Data"] * len(data_df) +
+             ["Finance"] * len(fin_df) +
+             ["BM"] * len(bm_df),
+    "Math": pd.concat([data_df["math"], fin_df["math"], bm_df["math"]], axis=0)
+})
 
-    income_summary["Group"] = income_summary["income_student"].map(
-        {1: "Income Supported", 0: "Not Supported"}
-    )
-
-    print("\nIncome Student Performance Comparison:")
-    print(income_summary)
-
-    return income_summary
-
-
-def generate_performance_alert_table(uni_df: pd.DataFrame,
-                                     alert_threshold: int = ALERT_THRESHOLD) -> pd.DataFrame:
-    df_alert = uni_df.copy()
-
-    agg = (
-        df_alert.groupby(["track", "cohort"])[SUBJECT_COLS]
+# Group, then reorder the index
+avg_math = (
+    temp.groupby("Track")["Math"]
         .mean()
-        .reset_index()
+        .reindex(["Data", "Finance", "BM"])   # <-- force the order
+)
+
+plt.figure()
+avg_math.plot(kind="bar", color=["#ff9999", "#66b3ff", "#99ff99"])
+plt.title("Average Mathematics Score by Track")
+plt.ylabel("Average Math Score")
+plt.show()
+
+
+# In[ ]:
+tracks = {
+    "Data Science": data_df,
+    "Finance": fin_df,
+    "Business": bm_df
+}
+
+colors = {
+    "Data Science": "#ff9999",
+    "Finance": "#66b3ff",
+    "Business": "#99ff99"
+}
+
+plt.figure(figsize=(15, 4))
+
+for i, (name, df) in enumerate(tracks.items(), 1):
+
+    plt.subplot(1, 3, i)
+    
+    # Scatter
+    plt.scatter(df["attendance"], df["project_score"],
+                alpha=0.6, color=colors[name])
+    
+    # Regression line
+    m, b = np.polyfit(df["attendance"], df["project_score"], 1)
+    x = np.linspace(df["attendance"].min(), df["attendance"].max(), 100)
+    plt.plot(x, m*x + b, color=colors[name], linewidth=2)
+    
+    # Correlation
+    r = df[["attendance", "project_score"]].corr().iloc[0, 1]
+    
+    # Display correlation on the subplot
+    plt.text(
+        0.05, 0.95,
+        f"r = {r:.2f}",
+        transform=plt.gca().transAxes,
+        fontsize=12,
+        fontweight="bold",
+        color="black",
+        verticalalignment="top"
     )
+    
+    plt.title(name)
+    plt.xlabel("Attendance")
+    plt.ylabel("Project Score")
 
-    agg["AvgScore"] = agg[SUBJECT_COLS].mean(axis=1)
-    agg["LowPerformance"] = agg["AvgScore"] < alert_threshold
-    agg["Alert"] = agg["LowPerformance"].apply(
-        lambda x: "⚠ LOW PERFORMANCE" if x else "OK"
-    )
-
-    print("\n===== Performance Alert Table =====")
-    print(agg.sort_values(["track", "cohort"]))
-
-    return agg.sort_values(["track", "cohort"]).reset_index(drop=True)
+plt.tight_layout()
+plt.show()
 
 
-# ============================================================
-# SYNTHETIC COHORT GENERATION & TRENDS
-# ============================================================
-def generate_synthetic_cohorts(uni_df: pd.DataFrame,
-                               candidates: List[str]) -> pd.DataFrame:
-    base_df = uni_df.reset_index().copy()
+# In[ ]:
+cohort_summary = uni_df.groupby("cohort").agg(
+    avg_math=("math", "mean"),
+    avg_english=("english", "mean"),
+    avg_science=("science", "mean"),
+    avg_history=("history", "mean"),
+    avg_attendance=("attendance", "mean"),
+    avg_project=("project_score", "mean"),
+    pass_rate=("passed", "mean"),   # passed already converted to 0/1
+    count=("cohort", "size")
+).reset_index()
 
-    existing_cohorts = set(base_df["cohort"].astype(str).unique())
-    new_cohorts = [c for c in candidates if c not in existing_cohorts]
-
-    print("Existing cohorts:", existing_cohorts)
-    print("New cohorts to generate:", new_cohorts)
-
-    track_sizes: Dict[str, int] = (
-        base_df.groupby("track")["student_id"].count().to_dict()
-    )
-    print("track sizes:", track_sizes)
-
-    synthetic_rows = []
-    max_id = base_df["student_id"].max()
-
-    for cohort in new_cohorts:
-        for track, size in track_sizes.items():
-            track_df = base_df[base_df["track"] == track]
-            sampled = track_df.sample(n=size, replace=True).copy()
-            sampled["student_id"] = range(max_id + 1, max_id + 1 + size)
-            max_id += size
-            sampled["cohort"] = cohort
-
-            for col in SUBJECT_COLS:
-                sampled[col] = (
-                    sampled[col].astype(float)
-                    + np.random.normal(loc=0, scale=5, size=len(sampled))
-                ).clip(0, 100).round().astype(int)
-
-            synthetic_rows.append(sampled)
-
-    synthetic_df = pd.concat(synthetic_rows, ignore_index=True)
-    uni_df_all = pd.concat([base_df, synthetic_df], ignore_index=True)
-    uni_df_all = uni_df_all.set_index("student_id")
-
-    print("Cohort counts in extended dataset:")
-    print(uni_df_all["cohort"].value_counts().sort_index())
-
-    return uni_df_all
+print("\nCohort-Level Summary:")
+print(cohort_summary)
 
 
-def build_trend_pivots(uni_df_all: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    uni_df_all = uni_df_all.copy()
-    uni_df_all["cohort"] = uni_df_all["cohort"].astype(str)
-
-    cohort_order = sorted(
-        uni_df_all["cohort"].unique(), key=lambda x: int(x.split("-")[0])
-    )
-    uni_df_all["cohort"] = pd.Categorical(
-        uni_df_all["cohort"], categories=cohort_order, ordered=True
-    )
-
-    trend_pivots: Dict[str, pd.DataFrame] = {}
-
-    for subj in SUBJECT_COLS:
-        mean_scores = (
-            uni_df_all.groupby(["cohort", "track"])[subj]
-            .mean()
-            .reset_index()
-        )
-        pivot = mean_scores.pivot(index="cohort", columns="track", values=subj)
-        trend_pivots[subj] = pivot.reset_index()
-
-    return trend_pivots
+# In[ ]:
+plt.figure()
+plt.bar(cohort_summary["cohort"], cohort_summary["pass_rate"] * 100)
+plt.title("Pass Rate by Cohort (%)")
+plt.xlabel("Cohort")
+plt.ylabel("Pass Rate (%)")
+plt.ylim(80, 100)
+plt.xticks(rotation=0)
+plt.show()
 
 
-# ============================================================
-# EXPORTS & DASHBOARD
-# ============================================================
-def export_cleaned_data(
-    data_df: pd.DataFrame,
-    fin_df: pd.DataFrame,
-    bm_df: pd.DataFrame,
-    uni_df: pd.DataFrame,
-) -> None:
-    os.makedirs(CLEAN_CSV_DIR, exist_ok=True)
+# In[ ]:
+income_summary = uni_df.groupby("income_student").agg(
+    avg_math=("math", "mean"),
+    avg_english=("english", "mean"),
+    avg_science=("science", "mean"),
+    avg_history=("history", "mean"),
+    avg_attendance=("attendance", "mean"),
+    avg_score=("project_score", "mean"),
+    pass_rate=("passed", "mean"),
+    count=("income_student", "size")
+).reset_index()
 
-    data_df.reset_index().to_csv(os.path.join(CLEAN_CSV_DIR, "data_df_cleaned.csv"), index=False)
-    fin_df.reset_index().to_csv(os.path.join(CLEAN_CSV_DIR, "fin_df_cleaned.csv"), index=False)
-    bm_df.reset_index().to_csv(os.path.join(CLEAN_CSV_DIR, "bm_df_cleaned.csv"), index=False)
-    uni_df.reset_index().to_csv(os.path.join(CLEAN_CSV_DIR, "uni_df_cleaned.csv"), index=False)
+# Map 1/0 → labels
+income_summary["Group"] = income_summary["income_student"].map({
+    1: "Income Supported",
+    0: "Not Supported"
+})
 
-    print(f"CSV files exported successfully to folder: '{CLEAN_CSV_DIR}'")
+print("\nIncome Student Performance Comparison:")
+print(income_summary)
 
 
-def create_dashboard_excel(
-    track_counts: pd.DataFrame,
-    track_summary: pd.DataFrame,
-    pass_fail_df: pd.DataFrame,
-    cohort_summary: pd.DataFrame,
-    income_summary: pd.DataFrame,
-    alert_table: pd.DataFrame,
-    trend_pivots: Dict[str, pd.DataFrame],
-    output_file: str = DASHBOARD_FILE,
-) -> None:
-    with pd.ExcelWriter(output_file, engine="xlsxwriter") as writer:
+
+# In[ ]:
+avg_academic = income_summary[[
+    "avg_math", "avg_english", "avg_science", "avg_history"
+]].mean(axis=1)
+
+plt.figure()
+plt.bar(income_summary["Group"], avg_academic, color=["#66b3ff", "#ff9999"])
+plt.title("Average Academic Performance by Income Group")
+plt.ylabel("Average Grade")
+plt.ylim(50, 75)
+plt.show()
+
+
+# In[ ]:
+# Export each cleaned dataframe to CSV
+data_df.to_csv("data_df_cleaned.csv", index=False)
+fin_df.to_csv("fin_df_cleaned.csv", index=False)
+bm_df.to_csv("bm_df_cleaned.csv", index=False)
+uni_df.to_csv("uni_df_cleaned.csv", index=False)
+
+print("CSV files exported successfully!")
+
+
+# In[ ]:
+# Track-level summary
+track_summary = (
+    uni_df
+    .groupby("track")
+    .agg({
+        "math": "mean",
+        "english": "mean",
+        "science": "mean",
+        "history": "mean",
+        "attendance": "mean",
+        "project_score": "mean"
+    })
+    .reset_index()
+)
+
+# Cohort-level summary
+cohort_summary = (
+    uni_df
+    .groupby("cohort")
+    .agg({
+        "math": "mean",
+        "english": "mean",
+        "science": "mean",
+        "history": "mean",
+        "attendance": "mean",
+        "project_score": "mean"
+    })
+    .reset_index()
+)
+
+# In[ ]:
+
+def create_dashboard_excel(track_df, cohort_df, output_file='Final_Dashboard.xlsx'):
+
+    with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
+        # 1. input summary sheet
+        track_df.to_excel(writer, sheet_name='track_Summary', index=False)
+        cohort_df.to_excel(writer, sheet_name='Cohort_Summary', index=False)
+
+        # 2. workbook / worksheet
         workbook = writer.book
+        worksheet_track = writer.sheets['track_Summary']
+        worksheet_cohort = writer.sheets['Cohort_Summary']
 
-        header_fmt = workbook.add_format(
-            {
-                "bold": True,
-                "bg_color": "#D9E1F2",
-                "font_color": "#000000",
-                "border": 1,
-                "align": "center",
-                "valign": "vcenter",
-            }
-        )
-        num_fmt = workbook.add_format({"num_format": "0.00"})
-        percent_fmt = workbook.add_format({"num_format": "0.0%", "align": "center"})
-        center_fmt = workbook.add_format({"align": "center", "valign": "vcenter"})
-        title_fmt = workbook.add_format(
-            {"bold": True, "font_size": 16, "font_color": "#305496"}
-        )
-
-        # =========================================================
-        # Overview
-        # =========================================================
-        ws_overview = workbook.add_worksheet("Overview")
-        ws_overview.set_zoom(90)
-        ws_overview.freeze_panes(5, 0)
-
-        ws_overview.merge_range("A1:H1", "Student Performance Dashboard", title_fmt)
-
-        # Track counts
-        start_row_tc = 3
-        ws_overview.write(start_row_tc, 0, "Track", header_fmt)
-        ws_overview.write(start_row_tc, 1, "Count", header_fmt)
-        for i, row in track_counts.iterrows():
-            ws_overview.write(start_row_tc + 1 + i, 0, row["track"], center_fmt)
-            ws_overview.write_number(start_row_tc + 1 + i, 1, row["count"])
-        ws_overview.set_column("A:A", 15)
-        ws_overview.set_column("B:B", 10)
-
-        # Pass/fail
-        start_row_pf = 3
-        ws_overview.write(start_row_pf, 3, "Status", header_fmt)
-        ws_overview.write(start_row_pf, 4, "Count", header_fmt)
-        ws_overview.write(start_row_pf, 5, "Percent", header_fmt)
-        for i, row in pass_fail_df.iterrows():
-            ws_overview.write(start_row_pf + 1 + i, 3, row["Status"], center_fmt)
-            ws_overview.write_number(start_row_pf + 1 + i, 4, row["Count"])
-            ws_overview.write_number(start_row_pf + 1 + i, 5, row["Percent"] / 100, percent_fmt)
-        ws_overview.set_column("D:D", 10)
-        ws_overview.set_column("E:E", 10)
-        ws_overview.set_column("F:F", 10)
-
-        # Track pie (red/blue/green)
-        chart_track_pie = workbook.add_chart({"type": "pie"})
-        chart_track_pie.add_series({
-            "name": "Track Distribution",
-            "categories": ["Overview", start_row_tc + 1, 0, start_row_tc + len(track_counts), 0],
-            "values": ["Overview", start_row_tc + 1, 1, start_row_tc + len(track_counts), 1],
-            "points": [
-                {"fill": {"color": series_color(0)}},
-                {"fill": {"color": series_color(1)}},
-                {"fill": {"color": series_color(2)}},
-            ],
+        # 3. setting the format
+        header_fmt = workbook.add_format({
+            'bold': True,
+            'bg_color': '#D7E4BC',
+            'border': 1
         })
-        chart_track_pie.set_title({"name": "Track Distribution"})
-        ws_overview.insert_chart("A10", chart_track_pie, {"x_scale": 1.1, "y_scale": 1.1})
+        num_fmt = workbook.add_format({'num_format': '0.00'})
 
-        # Pass/fail pie (use red/green)
-        chart_pf_pie = workbook.add_chart({"type": "pie"})
-        chart_pf_pie.add_series({
-            "name": "Pass / Fail",
-            "categories": ["Overview", start_row_pf + 1, 3, start_row_pf + len(pass_fail_df), 3],
-            "values": ["Overview", start_row_pf + 1, 4, start_row_pf + len(pass_fail_df), 4],
-            "points": [
-                {"fill": {"color": series_color(2)}},  # Pass -> green
-                {"fill": {"color": series_color(0)}},  # Fail -> red
-            ],
+        worksheet_track.set_column('B:G', 12, num_fmt)
+        worksheet_track.set_row(0, None, header_fmt)
+
+        worksheet_cohort.set_column('B:G', 12, num_fmt)
+        worksheet_cohort.set_row(0, None, header_fmt)
+
+        # =========================================================
+        # 4. track_Summary plot
+        # =========================================================
+        chart_track = workbook.add_chart({'type': 'column'})
+
+        max_row_track = len(track_df) + 1 
+
+
+        # Math
+        chart_track.add_series({
+            'name':       ['track_Summary', 0, 1],
+            'categories': ['track_Summary', 1, 0, max_row_track - 1, 0],
+            'values':     ['track_Summary', 1, 1, max_row_track - 1, 1],
         })
-        chart_pf_pie.set_title({"name": "Pass / Fail Ratio"})
-        ws_overview.insert_chart("H10", chart_pf_pie, {"x_scale": 1.1, "y_scale": 1.1})
+
+        # English
+        chart_track.add_series({
+            'name':       ['track_Summary', 0, 2],
+            'categories': ['track_Summary', 1, 0, max_row_track - 1, 0],
+            'values':     ['track_Summary', 1, 2, max_row_track - 1, 2],
+        })
+
+        # Science
+        chart_track.add_series({
+            'name':       ['track_Summary', 0, 3],
+            'categories': ['track_Summary', 1, 0, max_row_track - 1, 0],
+            'values':     ['track_Summary', 1, 3, max_row_track - 1, 3],
+        })
+
+        # History
+        chart_track.add_series({
+            'name':       ['track_Summary', 0, 4],
+            'categories': ['track_Summary', 1, 0, max_row_track - 1, 0],
+            'values':     ['track_Summary', 1, 4, max_row_track - 1, 4],
+        })
+
+        chart_track.set_title({'name': 'Average Scores by track'})
+        chart_track.set_x_axis({'name': 'track'})
+        chart_track.set_y_axis({'name': 'Score'})
+
+        worksheet_track.insert_chart('I2', chart_track)
 
         # =========================================================
-        # Track Summary
+        # 5. Cohort_Summary plot
         # =========================================================
-        track_summary.to_excel(writer, sheet_name="track_Summary", index=False)
-        ws_track = writer.sheets["track_Summary"]
-        ws_track.set_zoom(90)
-        ws_track.freeze_panes(1, 1)
+        chart_cohort = workbook.add_chart({'type': 'column'})
 
-        rows_t = len(track_summary)
-        cols_t = len(track_summary.columns)
-        col_idx_map_t = {col: i for i, col in enumerate(track_summary.columns)}
+        max_row_cohort = len(cohort_df) + 1  
 
-        ws_track.set_row(0, 18, header_fmt)
-        ws_track.set_column("A:A", 12, center_fmt)
-        ws_track.set_column("B:G", 12, num_fmt)
+        # Math
+        chart_cohort.add_series({
+            'name':       ['Cohort_Summary', 0, 1],
+            'categories': ['Cohort_Summary', 1, 0, max_row_cohort - 1, 0],
+            'values':     ['Cohort_Summary', 1, 1, max_row_cohort - 1, 1],
+        })
 
-        ws_track.add_table(
-            0, 0, rows_t, cols_t - 1,
-            {
-                "style": "Table Style Medium 9",
-                "columns": [{"header": col} for col in track_summary.columns],
-            },
-        )
+        # English
+        chart_cohort.add_series({
+            'name':       ['Cohort_Summary', 0, 2],
+            'categories': ['Cohort_Summary', 1, 0, max_row_cohort - 1, 0],
+            'values':     ['Cohort_Summary', 1, 2, max_row_cohort - 1, 2],
+        })
 
-        chart_track = workbook.add_chart({"type": "column"})
-        max_row_track = rows_t + 1  # header + data
+        # Science
+        chart_cohort.add_series({
+            'name':       ['Cohort_Summary', 0, 3],
+            'categories': ['Cohort_Summary', 1, 0, max_row_cohort - 1, 0],
+            'values':     ['Cohort_Summary', 1, 3, max_row_cohort - 1, 3],
+        })
 
-        for i, subj in enumerate(SUBJECT_COLS):  # math, english, science, history
-            if subj in col_idx_map_t:
-                cidx = col_idx_map_t[subj]
-                chart_track.add_series(
-                    {
-                        "name": ["track_Summary", 0, cidx],
-                        "categories": ["track_Summary", 1, 0, max_row_track - 1, 0],
-                        "values": ["track_Summary", 1, cidx, max_row_track - 1, cidx],
-                        "fill": {"color": series_color(i)},
-                    }
-                )
+        # History
+        chart_cohort.add_series({
+            'name':       ['Cohort_Summary', 0, 4],
+            'categories': ['Cohort_Summary', 1, 0, max_row_cohort - 1, 0],
+            'values':     ['Cohort_Summary', 1, 4, max_row_cohort - 1, 4],
+        })
 
-        chart_track.set_title({"name": "Average Scores by Track"})
-        chart_track.set_x_axis({"name": "Track"})
-        chart_track.set_y_axis({"name": "Score"})
-        ws_track.insert_chart("I2", chart_track, {"x_scale": 1.2, "y_scale": 1.2})
-
-        # =========================================================
-        # Cohort Summary
-        # =========================================================
-        cohort_summary.to_excel(writer, sheet_name="Cohort_Summary", index=False)
-        ws_cohort = writer.sheets["Cohort_Summary"]
-        ws_cohort.set_zoom(90)
-        ws_cohort.freeze_panes(1, 1)
-
-        rows_c = len(cohort_summary)
-        cols_c = len(cohort_summary.columns)
-        col_idx_map_c = {col: i for i, col in enumerate(cohort_summary.columns)}
-
-        ws_cohort.set_row(0, 18, header_fmt)
-        ws_cohort.set_column("A:A", 10, center_fmt)
-        ws_cohort.set_column("B:H", 12, num_fmt)
-        ws_cohort.set_column("I:I", 10, num_fmt)
-
-        ws_cohort.add_table(
-            0, 0, rows_c, cols_c - 1,
-            {
-                "style": "Table Style Medium 9",
-                "columns": [{"header": col} for col in cohort_summary.columns],
-            },
-        )
-
-        chart_cohort = workbook.add_chart({"type": "column"})
-        max_row_cohort = rows_c + 1
-
-        cohort_subject_cols = ["avg_math", "avg_english", "avg_science", "avg_history"]
-        for i, subj in enumerate(cohort_subject_cols):
-            if subj in col_idx_map_c:
-                cidx = col_idx_map_c[subj]
-                chart_cohort.add_series(
-                    {
-                        "name": ["Cohort_Summary", 0, cidx],
-                        "categories": ["Cohort_Summary", 1, 0, max_row_cohort - 1, 0],
-                        "values": [
-                            "Cohort_Summary",
-                            1,
-                            cidx,
-                            max_row_cohort - 1,
-                            cidx,
-                        ],
-                        "fill": {"color": series_color(i)},
-                    }
-                )
-
-        chart_cohort.set_title({"name": "Average Scores by Cohort"})
-        chart_cohort.set_x_axis({"name": "Cohort"})
-        chart_cohort.set_y_axis({"name": "Score"})
-        ws_cohort.insert_chart("J2", chart_cohort, {"x_scale": 1.1, "y_scale": 1.1})
-
-        # Pass rate chart (blue)
-        chart_passrate = workbook.add_chart({"type": "column"})
-        if "pass_rate" in col_idx_map_c:
-            pr_idx = col_idx_map_c["pass_rate"]
-            chart_passrate.add_series({
-                "name": "Pass Rate",
-                "categories": ["Cohort_Summary", 1, 0, max_row_cohort - 1, 0],
-                "values": ["Cohort_Summary", 1, pr_idx, max_row_cohort - 1, pr_idx],
-                "fill": {"color": series_color(1)},  # blue
-            })
-        chart_passrate.set_title({"name": "Pass Rate by Cohort"})
-        chart_passrate.set_y_axis({"name": "Pass Rate"})
-        ws_cohort.insert_chart("J20", chart_passrate, {"x_scale": 1.1, "y_scale": 1.1})
-
-        # =========================================================
-        # Income Summary
-        # =========================================================
-        income_summary.to_excel(writer, sheet_name="Income_Summary", index=False)
-        ws_income = writer.sheets["Income_Summary"]
-        ws_income.set_zoom(90)
-        ws_income.freeze_panes(1, 1)
-
-        rows_i = len(income_summary)
-        cols_i = len(income_summary.columns)
-        col_idx_map_i = {col: i for i, col in enumerate(income_summary.columns)}
-
-        ws_income.set_row(0, 18, header_fmt)
-        ws_income.set_column("A:A", 14, center_fmt)
-        ws_income.set_column("B:H", 12, num_fmt)
-        ws_income.set_column("I:I", 10, num_fmt)
-        ws_income.set_column("J:J", 16, center_fmt)
-
-        ws_income.add_table(
-            0, 0, rows_i, cols_i - 1,
-            {
-                "style": "Table Style Medium 9",
-                "columns": [{"header": col} for col in income_summary.columns],
-            },
-        )
-
-        chart_income = workbook.add_chart({"type": "column"})
-        max_row_income = rows_i + 1
-
-        income_subject_cols = ["avg_math", "avg_english", "avg_science", "avg_history"]
-        for i, subj in enumerate(income_subject_cols):
-            if subj in col_idx_map_i and "Group" in col_idx_map_i:
-                sidx = col_idx_map_i[subj]
-                gidx = col_idx_map_i["Group"]
-                chart_income.add_series(
-                    {
-                        "name": ["Income_Summary", 0, sidx],
-                        "categories": ["Income_Summary", 1, gidx, max_row_income - 1, gidx],
-                        "values": [
-                            "Income_Summary",
-                            1,
-                            sidx,
-                            max_row_income - 1,
-                            sidx,
-                        ],
-                        "fill": {"color": series_color(i)},
-                    }
-                )
-
-        chart_income.set_title({"name": "Subject Averages by Income Group"})
-        chart_income.set_x_axis({"name": "Group"})
-        chart_income.set_y_axis({"name": "Average Score"})
-        ws_income.insert_chart("L2", chart_income, {"x_scale": 1.1, "y_scale": 1.1})
-
-        # =========================================================
-        # Alerts
-        # =========================================================
-        alert_table.to_excel(writer, sheet_name="Alerts", index=False)
-        ws_alert = writer.sheets["Alerts"]
-        ws_alert.set_zoom(90)
-        ws_alert.freeze_panes(1, 1)
-
-        rows_a = len(alert_table)
-        cols_a = len(alert_table.columns)
-        col_idx_map_a = {col: i for i, col in enumerate(alert_table.columns)}
-
-        ws_alert.set_row(0, 18, header_fmt)
-        ws_alert.set_column("A:A", 10, center_fmt)
-        ws_alert.set_column("B:B", 10, center_fmt)
-        ws_alert.set_column("C:F", 12, num_fmt)
-        ws_alert.set_column("G:G", 12, num_fmt)
-        ws_alert.set_column("H:H", 14, center_fmt)
-        ws_alert.set_column("I:I", 18, center_fmt)
-
-        ws_alert.add_table(
-            0, 0, rows_a, cols_a - 1,
-            {
-                "style": "Table Style Medium 10",
-                "columns": [{"header": col} for col in alert_table.columns],
-            },
-        )
-
-        if "AvgScore" in col_idx_map_a:
-            avg_idx = col_idx_map_a["AvgScore"]
-            ws_alert.conditional_format(
-                1,
-                avg_idx,
-                rows_a,
-                avg_idx,
-                {
-                    "type": "3_color_scale",
-                    "min_color": "#FF0000",
-                    "mid_color": "#FFFF00",
-                    "max_color": "#00B050",
-                },
-            )
-
-        # =========================================================
-        # Trends
-        # =========================================================
-        ws_trends = workbook.add_worksheet("Trends")
-        ws_trends.set_zoom(90)
-        row_offset = 0
-
-        for subj, pivot_df in trend_pivots.items():
-            ws_trends.write(row_offset, 0, f"{subj.capitalize()} Trend", title_fmt)
-            start_row = row_offset + 2
-            start_col = 0
-
-            ws_trends.set_row(start_row, 18, header_fmt)
-            for col_idx, col_name in enumerate(pivot_df.columns):
-                ws_trends.write(start_row, start_col + col_idx, col_name)
-
-            for r in range(len(pivot_df)):
-                for c in range(len(pivot_df.columns)):
-                    value = pivot_df.iloc[r, c]
-                    if c == 0:
-                        ws_trends.write(start_row + 1 + r, start_col + c, value, center_fmt)
-                    else:
-                        ws_trends.write_number(start_row + 1 + r, start_col + c, value)
-
-            ws_trends.set_column(start_col, start_col, 10, center_fmt)
-            ws_trends.set_column(start_col + 1,
-                                 start_col + len(pivot_df.columns) - 1,
-                                 12,
-                                 num_fmt)
-
-            chart_trend = workbook.add_chart({"type": "line"})
-            num_rows = len(pivot_df)
-            num_cols = len(pivot_df.columns)
-
-            cat_range = ["Trends", start_row + 1, start_col, start_row + num_rows, start_col]
-
-            for i in range(1, num_cols):
-                chart_trend.add_series({
-                    "name": ["Trends", start_row, start_col + i],
-                    "categories": cat_range,
-                    "values": [
-                        "Trends",
-                        start_row + 1,
-                        start_col + i,
-                        start_row + num_rows,
-                        start_col + i,
-                    ],
-                    "line": {"color": series_color(i - 1)},
-                })
-
-            chart_trend.set_title({"name": f"{subj.capitalize()} Average Score Trend"})
-            chart_trend.set_x_axis({"name": "Cohort"})
-            chart_trend.set_y_axis({"name": "Average Score"})
-            ws_trends.insert_chart(start_row, start_col + num_cols + 2,
-                                   chart_trend,
-                                   {"x_scale": 1.1, "y_scale": 1.1})
-
-            row_offset = start_row + num_rows + 6
+        chart_cohort.set_title({'name': 'Average Scores by Cohort'})
+        chart_cohort.set_x_axis({'name': 'Cohort'})
+        chart_cohort.set_y_axis({'name': 'Score'})
+        
+        worksheet_cohort.insert_chart('I2', chart_cohort)
 
     print(f"Dashboard generated: {output_file}")
 
 
+# In[ ]:
+create_dashboard_excel(track_summary, cohort_summary, output_file='Final_Dashboard.xlsx')
+
+# In[ ]:
 # ============================================================
-# MAIN
+# Includes:
+# A. Threshold-based Alert Table
+# B. Heatmap Visualization
+# C. Text Alert Report
 # ============================================================
-def main() -> None:
-    xls = load_excel_file(FILE_NAME)
-    if xls is None:
-        return
+df_alert = uni_df.copy()
 
-    raw_data_df, raw_fin_df, raw_bm_df = load_track_sheets(xls)
-    uni_raw = concat_with_track_labels(raw_data_df, raw_fin_df, raw_bm_df)
-    if uni_raw is None:
-        return
+subject_cols = ["math", "english", "science", "history"]
 
-    uni_df = clean_data(uni_raw)
-    data_df = clean_data(raw_data_df)
-    fin_df = clean_data(raw_fin_df)
-    bm_df = clean_data(raw_bm_df)
+# ---------------------------------------------
+# STEP A: alert threshold settings
+# ---------------------------------------------
+alert_threshold = 60  # we can change the threshold here
 
-    track_counts = get_track_counts(data_df, fin_df, bm_df)
-    track_summary = make_track_summary(uni_df)
-    pass_fail_df = make_pass_fail_summary(uni_df)
-    cohort_summary = summarize_by_cohort(uni_df)
-    income_summary = summarize_by_income(uni_df)
-    alert_table = generate_performance_alert_table(uni_df, ALERT_THRESHOLD)
+agg = (
+    df_alert
+    .groupby(["track", "cohort"])[subject_cols]
+    .mean()
+    .reset_index()
+)
 
-    export_cleaned_data(data_df, fin_df, bm_df, uni_df)
+agg["AvgScore"] = agg[subject_cols].mean(axis=1)
+agg["LowPerformance"] = agg["AvgScore"] < alert_threshold
+agg["Alert"] = agg["LowPerformance"].apply(lambda x: "⚠ LOW PERFORMANCE" if x else "OK")
 
-    uni_df_all = generate_synthetic_cohorts(uni_df, NEW_COHORT_CANDIDATES)
-    trend_pivots = build_trend_pivots(uni_df_all)
+print("===== Performance Alert Table =====")
+display(agg.sort_values(["track", "cohort"]))
 
-    create_dashboard_excel(
-        track_counts=track_counts,
-        track_summary=track_summary,
-        pass_fail_df=pass_fail_df,
-        cohort_summary=cohort_summary,
-        income_summary=income_summary,
-        alert_table=alert_table,
-        trend_pivots=trend_pivots,
-        output_file=DASHBOARD_FILE,
+
+# ---------------------------------------------
+# STEP B: performance heating map
+# ---------------------------------------------
+plt.figure(figsize=(10, 6))
+pivot = agg.pivot(index="cohort", columns="track", values="AvgScore")
+sns.heatmap(pivot, annot=True, fmt=".1f", cmap="RdYlGn", center=70)
+plt.title("Performance Heatmap (Average Score)")
+plt.ylabel("Cohort")
+plt.xlabel("track")
+plt.show()
+
+
+# ---------------------------------------------
+# STEP C: text alarm
+# ---------------------------------------------
+alerts = agg[agg["LowPerformance"] == True]
+
+print("\n===== Automated Text Alert Report =====\n")
+
+if len(alerts) == 0:
+    print("No alerts. All tracks and cohorts meet performance standards.")
+else:
+    for _, row in alerts.iterrows():
+        print(
+            f"• {row['track']} track in cohort {row['cohort']} "
+            f"is low-performing (Average Score = {row['AvgScore']:.1f})"
+        )
+
+
+# In[ ]:
+base_df = uni_df.reset_index().copy()
+
+
+existing_cohorts = set(base_df["cohort"].astype(str).unique())
+candidate_new = ["23-24", "24-25", "25-26"]  
+new_cohorts = [c for c in candidate_new if c not in existing_cohorts]
+
+print("Existing cohorts:", existing_cohorts)
+print("New cohorts to generate:", new_cohorts)
+
+track_sizes = base_df.groupby("track")["student_id"].count().to_dict()
+print("track sizes:", track_sizes)
+
+synthetic_rows = []
+max_id = base_df["student_id"].max()  
+
+for cohort in new_cohorts:
+    for track, size in track_sizes.items():
+        track_df = base_df[base_df["track"] == track]
+        sampled = track_df.sample(n=size, replace=True).copy()
+        sampled["student_id"] = range(max_id + 1, max_id + 1 + size)
+        max_id += size
+        sampled["cohort"] = cohort
+
+       
+        for col in ["math", "english", "science", "history"]:
+            sampled[col] = (
+                sampled[col].astype(float)
+                + np.random.normal(loc=0, scale=5, size=len(sampled))  
+            ).clip(0, 100).round().astype(int)  
+
+        synthetic_rows.append(sampled)
+
+# combine
+synthetic_df = pd.concat(synthetic_rows, ignore_index=True)
+uni_df_all = pd.concat([base_df, synthetic_df], ignore_index=True)
+uni_df_all = uni_df_all.set_index("student_id")
+print("Cohort counts in extended dataset:")
+print(uni_df_all["cohort"].value_counts().sort_index())
+
+
+# In[ ]:
+
+uni_df_all = uni_df_all.copy()
+uni_df_all["cohort"] = uni_df_all["cohort"].astype(str)
+
+cohort_order = sorted(
+    uni_df_all["cohort"].unique(),
+    key=lambda x: int(x.split("-")[0])
+)
+uni_df_all["cohort"] = pd.Categorical(
+    uni_df_all["cohort"],
+    categories=cohort_order,
+    ordered=True
+)
+
+subjects = ["math", "english", "science", "history"]
+
+for subj in subjects:
+    plt.figure(figsize=(8, 5))
+
+    mean_scores = (
+        uni_df_all
+        .groupby(["cohort", "track"])[subj]
+        .mean()
+        .reset_index()
     )
 
+    for track in mean_scores["track"].unique():
+        track_data = mean_scores[mean_scores["track"] == track]
+        plt.plot(
+            track_data["cohort"],
+            track_data[subj],
+            marker="o",
+            label=track
+        )
 
-if __name__ == "__main__":
-    main()
+    plt.title(f"{subj.capitalize()} Average Score Trend by Cohort and track")
+    plt.xlabel("Cohort")
+    plt.ylabel("Average Score")
+    plt.ylim(0, 100)
+    plt.legend(title="track")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+# In[ ]:
+
+
