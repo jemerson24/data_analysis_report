@@ -1,8 +1,4 @@
--- ============================================================
--- Optimized Rebuild & Cleanup for uni_students (no CTE)
--- Safe for safe-update mode (no UPDATE/DELETE)
--- ============================================================
-
+=
 DROP TABLE IF EXISTS uni_students;
 
 -- Build unified, cleaned, normalized table
@@ -61,7 +57,7 @@ WHERE
     AND Attendance IS NOT NULL
     AND Score IS NOT NULL
     AND Passed IS NOT NULL
-    AND Incoming_Student IS NOT NULL
+    AND Income_Student IS NOT NULL
     AND Cohort IS NOT NULL;
 
 -- Replace the original with the cleaned table (cross-version safe syntax)
